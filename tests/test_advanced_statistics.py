@@ -12,7 +12,6 @@ from nielytics.core.timeseries import (
     decompose_timeseries,
     detect_anomalies,
 )
-from nielytics.exceptions import ValidationError
 
 
 def test_z_score_calculation_and_constant():

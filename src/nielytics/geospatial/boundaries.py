@@ -71,7 +71,8 @@ def point_in_polygon(
 ) -> bool:
     """Pure-Python ray-casting point-in-polygon algorithm with Shapely acceleration if available."""
     try:
-        from shapely.geometry import Point as SPoint, Polygon as SPolygon
+        from shapely.geometry import Point as SPoint
+        from shapely.geometry import Polygon as SPolygon
         return bool(SPolygon(polygon).contains(SPoint(lon, lat)))
     except ImportError:
         pass
@@ -82,13 +83,11 @@ def point_in_polygon(
     p1_lon, p1_lat = polygon[0][0], polygon[0][1]
     for i in range(1, n + 1):
         p2_lon, p2_lat = polygon[i % n][0], polygon[i % n][1]
-        if lat > min(p1_lat, p2_lat):
-            if lat <= max(p1_lat, p2_lat):
-                if lon <= max(p1_lon, p2_lon):
-                    if p1_lat != p2_lat:
-                        x_inters = (lat - p1_lat) * (p2_lon - p1_lon) / (p2_lat - p1_lat) + p1_lon
-                    if p1_lon == p2_lon or lon <= x_inters:
-                        inside = not inside
+        if lat > min(p1_lat, p2_lat) and lat <= max(p1_lat, p2_lat) and lon <= max(p1_lon, p2_lon):
+            if p1_lat != p2_lat:
+                x_inters = (lat - p1_lat) * (p2_lon - p1_lon) / (p2_lat - p1_lat) + p1_lon
+            if p1_lon == p2_lon or lon <= x_inters:
+                inside = not inside
         p1_lon, p1_lat = p2_lon, p2_lat
     return inside
 

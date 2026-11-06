@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
 from nielytics.exceptions import ValidationError
@@ -19,7 +17,7 @@ class ClosedFormRidgeRegressor:
     def fit(self, X: np.ndarray, y: np.ndarray) -> ClosedFormRidgeRegressor:
         if len(X) == 0 or len(X) != len(y):
             raise ValidationError("X and y must be nonempty and of identical length.")
-        n, p = X.shape
+        _n, p = X.shape
         # Regularization matrix (do not penalize intercept at col 0)
         reg = self.alpha * np.eye(p)
         reg[0, 0] = 0.0

@@ -9,6 +9,7 @@ import pandas as pd
 
 from nielytics.exceptions import ValidationError
 from nielytics.models.schemas import AnalysisResult
+
 from .boundaries import haversine_distance_km
 from .india_names import normalize_district_name, normalize_state_name
 
@@ -218,7 +219,7 @@ def detect_hazard_hotspots(
             hotspots.append({
                 "center_latitude": center_lat,
                 "center_longitude": center_lon,
-                "event_count": int(len(cluster_indices)),
+                "event_count": len(cluster_indices),
                 "radius_km": float(radius_km),
             })
 

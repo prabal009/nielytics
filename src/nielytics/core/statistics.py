@@ -344,7 +344,7 @@ def theil_sen_slope(
         "slope_ci_lower": float(round(res.low_slope, 6)),
         "slope_ci_upper": float(round(res.high_slope, 6)),
         "alpha": float(alpha),
-        "n_observations": int(len(y)),
+        "n_observations": len(y),
     }
 
 

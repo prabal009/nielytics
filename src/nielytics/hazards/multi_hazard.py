@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from nielytics.exceptions import ValidationError
@@ -101,7 +100,7 @@ class MultiHazardAnalyzer:
                 "flood_event_date": f_date.strftime("%Y-%m-%d"),
                 "antecedent_window_days": antecedent_days,
                 "antecedent_rainfall_sum_mm": float(round(tot_rain, 2)),
-                "rainfall_readings_count": int(len(prior_rain)),
+                "rainfall_readings_count": len(prior_rain),
             })
 
         return AnalysisResult(

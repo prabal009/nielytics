@@ -5,7 +5,6 @@ import json
 import pandas as pd
 import pytest
 
-from nielytics.exceptions import OptionalDependencyError
 from nielytics import (
     AnalysisResult,
     ClimateAnalytics,
@@ -37,6 +36,7 @@ from nielytics.core.visualization import (
 from nielytics.core.visualization import (
     plot_line as core_plot_line,
 )
+from nielytics.exceptions import OptionalDependencyError
 
 
 def test_all_five_analyzers_are_root_importable_with_backend_results():

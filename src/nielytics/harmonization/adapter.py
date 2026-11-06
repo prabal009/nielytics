@@ -13,6 +13,7 @@ from nielytics.core.loader import load_dataset
 from nielytics.exceptions import ValidationError
 from nielytics.geospatial.india_names import normalize_district_name, normalize_state_name
 from nielytics.models.schemas import AnalysisResult
+
 from .schema import (
     VALID_DATA_QUALITIES,
     VALID_HAZARDS,
@@ -99,7 +100,7 @@ class DatasetHarmonizer:
                     date_str = parsed_date.strftime("%Y-01-01")
                 else:  # event
                     date_str = parsed_date.strftime("%Y-%m-%d")
-            except Exception:
+            except (ValueError, TypeError, AttributeError, OverflowError):
                 drop_reasons["unparseable_date"] = drop_reasons.get("unparseable_date", 0) + 1
                 continue
 

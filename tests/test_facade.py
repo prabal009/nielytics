@@ -1,6 +1,6 @@
 import json
+
 import pandas as pd
-import pytest
 
 from nielytics.facade import ClimateAnalytics
 

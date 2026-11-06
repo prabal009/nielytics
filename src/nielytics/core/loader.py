@@ -121,7 +121,7 @@ def load_dataset(
                     frame = ds.to_dataframe().reset_index()
                 except ImportError:
                     try:
-                        import netCDF4  # noqa: F401
+                        import netCDF4
                         nc = netCDF4.Dataset(path)
                         data = {}
                         for var_name, var in nc.variables.items():

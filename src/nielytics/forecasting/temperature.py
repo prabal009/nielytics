@@ -11,7 +11,8 @@ from scipy import stats
 
 from nielytics.exceptions import ValidationError
 from nielytics.models.schemas import AnalysisResult
-from .baselines import PersistenceBaseline, SeasonalClimatologyBaseline
+
+from .baselines import SeasonalClimatologyBaseline
 from .evaluation import run_chronological_backtest
 from .features import extract_feature_vector
 from .models import DirectMultiStepForecaster
@@ -152,6 +153,7 @@ class TemperatureForecaster:
             raise ValidationError("horizon must be a positive integer.")
 
         levels = interval_levels or [0.80, 0.95]
+        self.uncertainty_calibrator.confidence_levels = levels
         origin_idx = len(self._fitted_series) - 1
         last_date = self._fitted_dates[-1]
 
@@ -284,7 +286,7 @@ class TemperatureForecaster:
 
         forecaster_obj.forecaster = direct_forecaster
         forecaster_obj.uncertainty_calibrator = HorizonUncertaintyCalibrator()
-        if "last_observations" in payload and payload["last_observations"]:
+        if payload.get("last_observations"):
             forecaster_obj._fitted_series = np.array(payload["last_observations"], dtype=float)
             forecaster_obj._fitted_dates = pd.DatetimeIndex(payload["last_dates"])
         return forecaster_obj

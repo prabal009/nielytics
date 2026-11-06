@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from itertools import pairwise
 from math import asin, cos, radians, sin, sqrt
+from typing import Any
 
 import numpy as np
 import pandas as pd

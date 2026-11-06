@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import Any
 
 import pandas as pd
 
@@ -92,8 +93,8 @@ class DroughtAnalyzer:
         and maps cumulative probability to the standard normal distribution.
         Recommended minimum sample size is 30 periods.
         """
-        from scipy import stats
         import numpy as np
+        from scipy import stats
 
         if scale_months < 1:
             raise ValidationError("scale_months must be an integer >= 1.")

@@ -25,7 +25,7 @@ def compute_metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, floa
         "rmse": float(round(rmse, 4)),
         "mbe": float(round(mbe, 4)),
         "medae": float(round(medae, 4)),
-        "count": int(len(actual)),
+        "count": len(actual),
     }
 
 
@@ -65,7 +65,6 @@ def run_chronological_backtest(
 
     # Evaluate origins
     for origin_idx in range(min_train_periods, n - max_h, step_days):
-        origin_date = dates[origin_idx]
         train_dates = dates[: origin_idx + 1]
         train_y = series[: origin_idx + 1]
 
@@ -91,7 +90,7 @@ def run_chronological_backtest(
             X_dict_np = {h: np.array(X_train_dict[h]) for h in target_horizons}
             y_dict_np = {h: np.array(y_train_dict[h]) for h in target_horizons}
             forecaster.fit(X_dict_np, y_dict_np)
-        except Exception:
+        except (ValueError, np.linalg.LinAlgError):
             continue
 
         # Predict for each horizon

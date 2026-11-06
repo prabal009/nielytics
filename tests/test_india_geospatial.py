@@ -1,6 +1,6 @@
 import json
+
 import pandas as pd
-import pytest
 
 from nielytics.geospatial import (
     aggregate_hazards_by_region,

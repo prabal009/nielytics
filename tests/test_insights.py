@@ -1,5 +1,4 @@
 import json
-import pytest
 
 from nielytics.insights import InsightEngine
 from nielytics.models.schemas import AnalysisResult
