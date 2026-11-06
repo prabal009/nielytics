@@ -46,6 +46,34 @@ class Dataset:
         """Summarize numeric columns, skipping missing values; sample variance by default."""
         return statistics.summarize(self._frame, columns=columns, ddof=ddof)
 
+    def quality_report(self) -> dict[str, Any]:
+        """Return a structured data quality and completeness report."""
+        return cleaner.data_quality_report(self._frame)
+
+    def convert_units(self, column: str, from_unit: str, to_unit: str) -> Dataset:
+        """Convert a numeric column between physical units, returning a new Dataset."""
+        return self._clean("convert_units", column=column, from_unit=from_unit, to_unit=to_unit)
+
+    def detect_outliers(
+        self,
+        columns: str | list[str] | None = None,
+        *,
+        method: str = "zscore",
+        threshold: float | None = None,
+    ) -> pd.DataFrame:
+        """Detect outliers across selected columns, returning boolean masks aligned with rows."""
+        from .core import outliers as core_outliers
+        cols = [columns] if isinstance(columns, str) else list(columns) if columns is not None else [
+            c for c in self._frame.columns if statistics._is_real_numeric(self._frame[c])
+        ]
+        res = pd.DataFrame(index=self._frame.index)
+        norm_method = "zscore" if method in ("zscore", "z_score") else method
+        for col in cols:
+            res[f"{col}_outlier"] = core_outliers.detect_outliers(
+                self._frame, col, method=norm_method, threshold=threshold
+            )
+        return res
+
     def _clean(self, operation: str, **options: Any) -> Dataset:
         frame = getattr(cleaner, operation)(self._frame, **options)
         result = Dataset(frame)

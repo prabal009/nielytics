@@ -121,3 +121,180 @@ class CycloneAnalyzer:
                       self._meta(latitude=lat, longitude=lon, radius_km=radius,
                                  method="nearest sampled track point; no track interpolation"),
                       self._warnings(), _CAVEAT)
+
+    def imd_cyclone_classification(self) -> AnalysisResult:
+        """Classify storm peak intensity according to official India Meteorological Department (IMD) scale.
+
+        Scale:
+        - Low Pressure Area (< 31 km/h)
+        - Depression (31 – 49 km/h)
+        - Deep Depression (50 – 61 km/h)
+        - Cyclonic Storm (62 – 88 km/h)
+        - Severe Cyclonic Storm (89 – 117 km/h)
+        - Very Severe Cyclonic Storm (118 – 167 km/h)
+        - Extremely Severe Cyclonic Storm (168 – 221 km/h)
+        - Super Cyclonic Storm (>= 222 km/h)
+        """
+        storm_classifications: list[dict[str, Any]] = []
+        counts = {
+            "Low Pressure Area": 0,
+            "Depression": 0,
+            "Deep Depression": 0,
+            "Cyclonic Storm": 0,
+            "Severe Cyclonic Storm": 0,
+            "Very Severe Cyclonic Storm": 0,
+            "Extremely Severe Cyclonic Storm": 0,
+            "Super Cyclonic Storm": 0,
+        }
+
+        for storm_id, points in self._data.groupby(self.storm_id_column, sort=False):
+            winds = points[self.wind_column].dropna().astype(float)
+            if len(winds) == 0:
+                continue
+            max_wind = float(winds.max())
+            min_press = float(points[self.pressure_column].dropna().min()) if points[self.pressure_column].notna().any() else None
+
+            if max_wind < 31.0:
+                cat = "Low Pressure Area"
+            elif max_wind <= 49.0:
+                cat = "Depression"
+            elif max_wind <= 61.0:
+                cat = "Deep Depression"
+            elif max_wind <= 88.0:
+                cat = "Cyclonic Storm"
+            elif max_wind <= 117.0:
+                cat = "Severe Cyclonic Storm"
+            elif max_wind <= 167.0:
+                cat = "Very Severe Cyclonic Storm"
+            elif max_wind <= 221.0:
+                cat = "Extremely Severe Cyclonic Storm"
+            else:
+                cat = "Super Cyclonic Storm"
+
+            counts[cat] += 1
+            storm_classifications.append({
+                "storm_id": storm_id,
+                "peak_wind_kmh": float(round(max_wind, 2)),
+                "min_pressure_hpa": float(round(min_press, 2)) if min_press is not None else None,
+                "category": cat,
+            })
+
+        warning = "IMD cyclone classifications reflect 3-minute sustained wind observations; satellite Dvorak estimates have inherent uncertainty."
+        return result(
+            "imd_cyclone_classification",
+            {
+                "total_storms": len(storm_classifications),
+                "category_counts": counts,
+                "storms": storm_classifications,
+            },
+            self._meta(standard="India Meteorological Department (IMD)"),
+            [warning, *self._warnings()],
+            _CAVEAT,
+        )
+
+    def convert_wind_units(self, from_unit: str = "km/h", to_unit: str = "knots") -> pd.DataFrame:
+        """Return a copy of track data with converted wind speeds."""
+        from nielytics.core.cleaner import convert_units
+        return convert_units(self._data, self.wind_column, from_unit=from_unit, to_unit=to_unit)
+
+    def landfall_analysis(
+        self,
+        coastline_points: list[tuple[float, float]] | None = None,
+        proximity_threshold_km: float = 50.0,
+    ) -> AnalysisResult:
+        """Detect track crossing or closest proximity of storm tracks to Indian coastline reference coordinates."""
+        # Representative Indian coastline sample points (lat, lon)
+        default_coast = [
+            (8.08, 77.55), (10.76, 79.84), (13.08, 80.27), (15.91, 80.47),
+            (17.68, 83.21), (19.81, 85.83), (21.62, 87.52), (21.70, 88.08),
+            (18.92, 72.83), (15.49, 73.82), (12.87, 74.88), (9.93, 76.26),
+        ]
+        coast = coastline_points or default_coast
+        landfall_candidates: list[dict[str, Any]] = []
+
+        for storm_id, points in self._data.groupby(self.storm_id_column, sort=False):
+            min_dist = float("inf")
+            best_time = None
+            best_lat, best_lon = None, None
+
+            for _, pt in points.iterrows():
+                pt_lat, pt_lon = float(pt[self.latitude_column]), float(pt[self.longitude_column])
+                for c_lat, c_lon in coast:
+                    d = _distance(pt_lat, pt_lon, c_lat, c_lon)
+                    if d < min_dist:
+                        min_dist = d
+                        best_time = pt[self.time_column].isoformat()
+                        best_lat, best_lon = pt_lat, pt_lon
+
+            landfall_candidates.append({
+                "storm_id": storm_id,
+                "closest_coast_distance_km": float(round(min_dist, 2)),
+                "closest_time": best_time,
+                "location": {"latitude": best_lat, "longitude": best_lon},
+                "potential_landfall": bool(min_dist <= proximity_threshold_km),
+            })
+
+        return result(
+            "cyclone_landfall_analysis",
+            {
+                "proximity_threshold_km": proximity_threshold_km,
+                "storms": landfall_candidates,
+            },
+            self._meta(method="minimum distance to reference coastline points"),
+            self._warnings(),
+            _CAVEAT,
+        )
+
+    def regional_cyclone_exposure(
+        self,
+        target_lat: float,
+        target_lon: float,
+        radius_km: float = 300.0,
+    ) -> AnalysisResult:
+        """Identify cyclones passing within a given radius of a target Indian region coordinate."""
+        prox = self.proximity(latitude=target_lat, longitude=target_lon, radius_km=radius_km)
+        exposed = [s for s in prox.data["storms"] if s["within_radius"]]
+        return result(
+            "regional_cyclone_exposure",
+            {
+                "target_coordinates": {"latitude": target_lat, "longitude": target_lon},
+                "radius_km": radius_km,
+                "total_exposed_storms": len(exposed),
+                "exposed_storms": exposed,
+            },
+            self._meta(target_latitude=target_lat, target_longitude=target_lon, radius_km=radius_km),
+            self._warnings(),
+            _CAVEAT,
+        )
+
+    def seasonal_cyclone_trend(self) -> AnalysisResult:
+        """Compare cyclone frequency across Pre-Monsoon (Apr–May) and Post-Monsoon (Oct–Dec) seasons."""
+        df = self._data.copy()
+        df["month"] = df[self.time_column].dt.month
+        df["year"] = df[self.time_column].dt.year
+
+        pre_monsoon_storms = set()
+        post_monsoon_storms = set()
+        monsoon_storms = set()
+
+        for storm_id, grp in df.groupby(self.storm_id_column):
+            months = set(grp["month"].unique())
+            if any(m in (4, 5) for m in months):
+                pre_monsoon_storms.add(storm_id)
+            elif any(m in (10, 11, 12) for m in months):
+                post_monsoon_storms.add(storm_id)
+            elif any(m in (6, 7, 8, 9) for m in months):
+                monsoon_storms.add(storm_id)
+
+        return result(
+            "seasonal_cyclone_trend",
+            {
+                "pre_monsoon_april_may_count": len(pre_monsoon_storms),
+                "post_monsoon_oct_dec_count": len(post_monsoon_storms),
+                "monsoon_june_sept_count": len(monsoon_storms),
+                "post_to_pre_ratio": float(round(len(post_monsoon_storms) / len(pre_monsoon_storms), 2)) if len(pre_monsoon_storms) > 0 else None,
+            },
+            self._meta(method="season of storm activity by calendar month"),
+            self._warnings(),
+            _CAVEAT,
+        )

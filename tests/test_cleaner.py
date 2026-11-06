@@ -6,6 +6,8 @@ from pandas.testing import assert_frame_equal
 from nielytics.core.cleaner import (
     clean_text,
     convert_types,
+    convert_units,
+    data_quality_report,
     fill_missing,
     missing_report,
     parse_dates,
@@ -130,3 +132,38 @@ def test_dates_explicit_format_errors_and_no_mutation():
 def test_cleaners_reject_nonframes(operation):
     with pytest.raises(ValidationError):
         operation([1, 2])
+
+
+def test_convert_units_temperature():
+    df = pd.DataFrame({"temp_c": [0.0, 100.0, 37.0]})
+    res_f = convert_units(df, "temp_c", "C", "F")
+    assert res_f["temp_c"].iloc[0] == pytest.approx(32.0)
+    assert res_f["temp_c"].iloc[1] == pytest.approx(212.0)
+    res_c = convert_units(res_f, "temp_c", "F", "C")
+    assert res_c["temp_c"].iloc[2] == pytest.approx(37.0)
+    res_k = convert_units(df, "temp_c", "C", "K")
+    assert res_k["temp_c"].iloc[0] == pytest.approx(273.15)
+
+
+def test_convert_units_rainfall_and_wind():
+    df = pd.DataFrame({"rain": [25.4, 50.8], "wind": [36.0, 72.0]})
+    res_rain = convert_units(df, "rain", "mm", "inch")
+    assert res_rain["rain"].iloc[0] == pytest.approx(1.0)
+    assert res_rain["rain"].iloc[1] == pytest.approx(2.0)
+
+    res_wind = convert_units(df, "wind", "km/h", "m/s")
+    assert res_wind["wind"].iloc[0] == pytest.approx(10.0)
+    assert res_wind["wind"].iloc[1] == pytest.approx(20.0)
+
+
+def test_data_quality_report():
+    df = pd.DataFrame({
+        "temp": [25.0, 26.0, 25.5, np.nan, 100.0],  # 100.0 is an outlier
+        "city": ["Delhi", "Delhi", "Mumbai", "Kolkata", "Chennai"],
+    })
+    report = data_quality_report(df)
+    assert report["total_rows"] == 5
+    assert report["total_columns"] == 2
+    assert report["missingness"]["temp"]["missing_count"] == 1
+    assert "temp" in report["numeric_columns"]
+    assert report["quality_score"] > 0

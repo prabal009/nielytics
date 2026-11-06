@@ -79,3 +79,187 @@ class DroughtAnalyzer:
                                method="difference of observed daily means; no seasonal adjustment",
                                location=self.location),
                       warnings, _CAVEAT)
+
+    def standardized_precipitation_index(
+        self,
+        scale_months: int = 3,
+        baseline_start: str | None = None,
+        baseline_end: str | None = None,
+    ) -> AnalysisResult:
+        """Compute Standardized Precipitation Index (SPI) across rolling multi-month accumulations.
+
+        Fits a two-parameter Gamma distribution to rolling non-zero rainfall totals
+        and maps cumulative probability to the standard normal distribution.
+        Recommended minimum sample size is 30 periods.
+        """
+        from scipy import stats
+        import numpy as np
+
+        if scale_months < 1:
+            raise ValidationError("scale_months must be an integer >= 1.")
+
+        df = self._data.copy()
+        df["year_month"] = df[self.date_column].dt.to_period("M")
+        monthly = df.groupby("year_month")[self.rainfall_column].sum().reset_index()
+        monthly["date"] = monthly["year_month"].dt.to_timestamp()
+        monthly = monthly.sort_values("date").reset_index(drop=True)
+
+        monthly["rolling_rain"] = monthly[self.rainfall_column].rolling(
+            window=scale_months, min_periods=scale_months
+        ).sum()
+
+        valid = monthly.dropna(subset=["rolling_rain"]).copy()
+        if len(valid) < 3:
+            raise ValidationError(f"SPI-{scale_months} requires at least 3 multi-month accumulation periods.")
+
+        warnings: list[str] = []
+        if len(valid) < 30:
+            warnings.append(f"Sample size ({len(valid)}) is under 30 multi-month periods; SPI estimates may have higher sampling variance.")
+
+        # Select calibration sample
+        if baseline_start is not None and baseline_end is not None:
+            calib_mask = valid["date"].between(pd.Timestamp(baseline_start), pd.Timestamp(baseline_end))
+            calib_data = valid.loc[calib_mask, "rolling_rain"].to_numpy(dtype=float)
+            if len(calib_data) < 3:
+                calib_data = valid["rolling_rain"].to_numpy(dtype=float)
+                warnings.append("Baseline period contained fewer than 3 periods; falling back to full series.")
+        else:
+            calib_data = valid["rolling_rain"].to_numpy(dtype=float)
+
+        # Fit Gamma distribution
+        pos_calib = calib_data[calib_data > 0]
+        zero_count = int(np.sum(calib_data <= 0))
+        total_calib = len(calib_data)
+        q_zero = zero_count / total_calib if total_calib > 0 else 0.0
+
+        if len(pos_calib) >= 3:
+            # Fit Gamma with floc=0
+            shape_a, _, scale_s = stats.gamma.fit(pos_calib, floc=0)
+        else:
+            # Fallback Gaussian
+            shape_a, scale_s = None, None
+
+        records: list[dict[str, Any]] = []
+        for _, row in valid.iterrows():
+            val = float(row["rolling_rain"])
+            d_str = row["date"].strftime("%Y-%m")
+
+            if shape_a is not None and scale_s is not None and scale_s > 0:
+                if val <= 0:
+                    h_prob = q_zero
+                else:
+                    g_prob = float(stats.gamma.cdf(val, a=shape_a, scale=scale_s))
+                    h_prob = q_zero + (1.0 - q_zero) * g_prob
+            else:
+                # Fallback Gaussian CDF
+                m_val, s_val = float(np.mean(calib_data)), float(np.std(calib_data, ddof=1)) or 1.0
+                h_prob = float(stats.norm.cdf(val, loc=m_val, scale=s_val))
+
+            # Clamp probability
+            h_prob = max(1e-6, min(1.0 - 1e-6, h_prob))
+            spi_val = float(stats.norm.ppf(h_prob))
+
+            # Classification
+            if spi_val >= 2.0:
+                cat = "Extremely wet"
+            elif spi_val >= 1.5:
+                cat = "Very wet"
+            elif spi_val >= 1.0:
+                cat = "Moderately wet"
+            elif spi_val > -1.0:
+                cat = "Near normal"
+            elif spi_val > -1.5:
+                cat = "Moderately dry"
+            elif spi_val > -2.0:
+                cat = "Severely dry"
+            else:
+                cat = "Extremely dry"
+
+            records.append({
+                "date": d_str,
+                "rolling_rain_mm": float(round(val, 2)),
+                "spi": float(round(spi_val, 3)),
+                "category": cat,
+            })
+
+        dry_episodes = [r for r in records if r["spi"] <= -1.0]
+        meta = metadata(
+            self._data,
+            self.date_column,
+            {"rainfall": "mm", "spi": "dimensionless"},
+            scale_months=scale_months,
+            baseline_period={"start": baseline_start, "end": baseline_end} if baseline_start else "full_series",
+            location=self.location,
+        )
+        warning = "Standardized Precipitation Index (SPI) is a meteorological drought indicator, not an agricultural soil moisture measurement."
+        return result(
+            f"spi_{scale_months}",
+            {
+                "scale_months": scale_months,
+                "total_periods": len(records),
+                "drought_periods_count": len(dry_episodes),
+                "records": records,
+            },
+            meta,
+            [warning, *warnings, *warnings_for(self._data, self.date_column, (self.rainfall_column,))],
+            _CAVEAT,
+        )
+
+    def seasonal_rainfall_anomaly(self, monsoon_months: list[int] | None = None) -> AnalysisResult:
+        """Analyze Southwest Monsoon season (June–September) precipitation deficit."""
+        months = monsoon_months or [6, 7, 8, 9]
+        df = self._data.copy()
+        df["month"] = df[self.date_column].dt.month
+        df["year"] = df[self.date_column].dt.year
+
+        monsoon = df[df["month"].isin(months)]
+        annual_monsoon = monsoon.groupby("year")[self.rainfall_column].sum()
+        if len(annual_monsoon) == 0:
+            raise ValidationError("No observations found within the specified monsoon months.")
+
+        long_term_mean = float(annual_monsoon.mean())
+        annual_results: list[dict[str, Any]] = []
+
+        for yr, total in annual_monsoon.items():
+            f_tot = float(total)
+            dep = f_tot - long_term_mean
+            dep_pct = float(round(dep / long_term_mean * 100, 2)) if long_term_mean > 0 else 0.0
+            annual_results.append({
+                "year": int(yr),
+                "monsoon_rainfall_mm": float(round(f_tot, 2)),
+                "departure_mm": float(round(dep, 2)),
+                "departure_percentage": dep_pct,
+                "classification": "Deficient" if dep_pct < -20.0 else ("Excess" if dep_pct > 20.0 else "Normal"),
+            })
+
+        return result(
+            "seasonal_monsoon_anomaly",
+            {
+                "long_term_monsoon_mean_mm": float(round(long_term_mean, 2)),
+                "seasons": annual_results,
+            },
+            metadata(self._data, self.date_column, {"rainfall": "mm"}, monsoon_months=months, location=self.location),
+            warnings_for(self._data, self.date_column, (self.rainfall_column,)),
+            _CAVEAT,
+        )
+
+    def historical_drought_frequency(self) -> AnalysisResult:
+        """Compute frequency of meteorological drought periods over observed years using SPI-3."""
+        spi_res = self.standardized_precipitation_index(scale_months=3)
+        records = spi_res.data["records"]
+        dry_records = [r for r in records if r["spi"] <= -1.0]
+        by_year: dict[str, int] = {}
+        for r in dry_records:
+            yr = r["date"].split("-")[0]
+            by_year[yr] = by_year.get(yr, 0) + 1
+
+        return result(
+            "historical_drought_frequency",
+            {
+                "total_drought_months": len(dry_records),
+                "annual_drought_frequency": by_year,
+            },
+            metadata(self._data, self.date_column, {"drought": "count"}, location=self.location),
+            warnings_for(self._data, self.date_column, (self.rainfall_column,)),
+            _CAVEAT,
+        )

@@ -161,3 +161,190 @@ def parse_dates(
         except (TypeError, ValueError, OverflowError) as exc:
             raise ValidationError(f"Cannot parse dates in column {column!r}: {exc}") from exc
     return result
+
+
+def convert_units(
+    frame: pd.DataFrame,
+    column: str,
+    from_unit: str,
+    to_unit: str,
+) -> pd.DataFrame:
+    """Convert numeric measurements in `column` between physical units.
+
+    Supported categories:
+    - Temperature: C (Celsius), F (Fahrenheit), K (Kelvin)
+    - Precipitation / Length: mm, cm, m, inch
+    - Wind Speed: km/h, m/s, knots, mph
+    - Pressure: hPa, mbar, bar, atm, Pa
+
+    Returns a non-mutating copy of the DataFrame with converted values.
+    """
+    _validate_frame(frame)
+    if column not in frame.columns:
+        raise ValidationError(f"Column {column!r} not found in DataFrame.")
+    if not is_numeric_dtype(frame[column].dtype):
+        raise ValidationError(f"Column {column!r} must be numeric for unit conversion.")
+
+    u_from = str(from_unit).strip().lower()
+    u_to = str(to_unit).strip().lower()
+
+    # Canonicalize temperature units
+    temp_aliases = {
+        "c": "C", "celsius": "C", "degc": "C", "°c": "C",
+        "f": "F", "fahrenheit": "F", "degf": "F", "°f": "F",
+        "k": "K", "kelvin": "K", "degk": "K",
+    }
+    # Canonicalize length/precipitation units
+    length_factors = {  # relative to mm
+        "mm": 1.0, "millimeter": 1.0, "millimeters": 1.0,
+        "cm": 10.0, "centimeter": 10.0, "centimeters": 10.0,
+        "m": 1000.0, "meter": 1000.0, "meters": 1000.0,
+        "inch": 25.4, "in": 25.4, "inches": 25.4,
+    }
+    # Canonicalize speed units
+    speed_factors = {  # relative to km/h
+        "km/h": 1.0, "kph": 1.0, "kmh": 1.0,
+        "m/s": 3.6, "mps": 3.6,
+        "knots": 1.852, "knot": 1.852, "kt": 1.852, "kts": 1.852,
+        "mph": 1.609344,
+    }
+    # Canonicalize pressure units
+    pressure_factors = {  # relative to hPa
+        "hpa": 1.0, "hectopascal": 1.0, "hectopascals": 1.0,
+        "mbar": 1.0, "mb": 1.0, "millibar": 1.0, "millibars": 1.0,
+        "bar": 1000.0, "bars": 1000.0,
+        "atm": 1013.25, "atmosphere": 1013.25, "atmospheres": 1013.25,
+        "pa": 0.01, "pascal": 0.01, "pascals": 0.01,
+    }
+
+    series = frame[column].astype(float)
+    result = frame.copy(deep=True)
+
+    if u_from in temp_aliases and u_to in temp_aliases:
+        canon_from = temp_aliases[u_from]
+        canon_to = temp_aliases[u_to]
+        if canon_from == canon_to:
+            result[column] = series
+            return result
+        # Convert to Celsius first
+        if canon_from == "C":
+            celsius = series
+        elif canon_from == "F":
+            celsius = (series - 32.0) * (5.0 / 9.0)
+        else:  # K
+            celsius = series - 273.15
+        # Convert Celsius to target
+        if canon_to == "C":
+            converted = celsius
+        elif canon_to == "F":
+            converted = (celsius * (9.0 / 5.0)) + 32.0
+        else:  # K
+            converted = celsius + 273.15
+        result[column] = converted
+        return result
+
+    if u_from in length_factors and u_to in length_factors:
+        val_mm = series * length_factors[u_from]
+        result[column] = val_mm / length_factors[u_to]
+        return result
+
+    if u_from in speed_factors and u_to in speed_factors:
+        val_kmh = series * speed_factors[u_from]
+        result[column] = val_kmh / speed_factors[u_to]
+        return result
+
+    if u_from in pressure_factors and u_to in pressure_factors:
+        val_hpa = series * pressure_factors[u_from]
+        result[column] = val_hpa / pressure_factors[u_to]
+        return result
+
+    raise ValidationError(
+        f"Unsupported or incompatible unit conversion from {from_unit!r} to {to_unit!r}."
+    )
+
+
+def data_quality_report(frame: pd.DataFrame) -> dict[str, Any]:
+    """Compute a comprehensive data quality and completeness report.
+
+    Returns a strictly JSON-serializable dictionary detailing row completeness,
+    duplicate prevalence, numeric bounds, date continuity, and outlier presence.
+    """
+    import numpy as np
+
+    _validate_frame(frame)
+    total_rows = len(frame)
+    total_cols = len(frame.columns)
+
+    if total_rows == 0:
+        return {
+            "total_rows": 0,
+            "total_columns": total_cols,
+            "missingness": {col: {"missing_count": 0, "missing_percentage": 0.0} for col in frame.columns},
+            "duplicate_rows": 0,
+            "duplicate_percentage": 0.0,
+            "numeric_columns": {},
+            "date_columns": {},
+            "quality_score": 100.0,
+        }
+
+    missing_counts = frame.isna().sum()
+    missingness = {
+        col: {
+            "missing_count": int(missing_counts[col]),
+            "missing_percentage": float(round(missing_counts[col] / total_rows * 100, 2)),
+        }
+        for col in frame.columns
+    }
+
+    dup_count = int(frame.duplicated().sum())
+    dup_pct = float(round(dup_count / total_rows * 100, 2))
+
+    numeric_stats: dict[str, Any] = {}
+    date_stats: dict[str, Any] = {}
+
+    for col in frame.columns:
+        s = frame[col]
+        if is_numeric_dtype(s.dtype):
+            valid = s.dropna().astype(float)
+            if len(valid) > 0:
+                mean_val = float(valid.mean())
+                std_val = float(valid.std(ddof=1)) if len(valid) > 1 else 0.0
+                outlier_count = 0
+                if std_val > 1e-12:
+                    z = np.abs((valid - mean_val) / std_val)
+                    outlier_count = int((z > 3.0).sum())
+                numeric_stats[str(col)] = {
+                    "min": float(valid.min()),
+                    "max": float(valid.max()),
+                    "mean": float(round(mean_val, 4)),
+                    "std": float(round(std_val, 4)),
+                    "null_count": int(s.isna().sum()),
+                    "outlier_count_zscore_3": outlier_count,
+                }
+        elif pd.api.types.is_datetime64_any_dtype(s.dtype):
+            valid_dt = s.dropna()
+            if len(valid_dt) > 0:
+                date_stats[str(col)] = {
+                    "min_date": str(valid_dt.min()),
+                    "max_date": str(valid_dt.max()),
+                    "is_monotonic": bool(valid_dt.is_monotonic_increasing),
+                }
+
+    # Calculate quality score (0 to 100)
+    total_cells = total_rows * total_cols if total_cols > 0 else 1
+    total_missing_cells = int(missing_counts.sum())
+    missing_ratio = total_missing_cells / total_cells
+    dup_ratio = dup_count / total_rows
+    penalty = (missing_ratio * 50.0) + (dup_ratio * 30.0)
+    score = float(round(max(0.0, min(100.0, 100.0 - penalty)), 1))
+
+    return {
+        "total_rows": total_rows,
+        "total_columns": total_cols,
+        "missingness": missingness,
+        "duplicate_rows": dup_count,
+        "duplicate_percentage": dup_pct,
+        "numeric_columns": numeric_stats,
+        "date_columns": date_stats,
+        "quality_score": score,
+    }

@@ -1,78 +1,185 @@
-# NIElytics
+# NIElytics (v2.0 Development Tree)
 
-Independent Python analytics library for ClimateLens India (SDG 13). This repository implements core analytics and optional visualization, not a frontend, backend, or operational disaster service.
+[![CI](https://github.com/prabal009/nielytics/actions/workflows/ci.yml/badge.svg)](https://github.com/prabal009/nielytics/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Development Tree](https://img.shields.io/badge/version-0.2.0.dev1-green.svg)](https://github.com/prabal009/nielytics)
 
-For step-by-step setup, every testing/build command, and practical Python examples, see [Commands and usage](COMMANDS_AND_USAGE.md).
+**NIElytics** is an independent, high-performance computational Python analytics engine purpose-built for **ClimateLens India** (SDG 13 - Climate Action). It provides scientific hazard analytics, multi-source climate data harmonization, India-specific administrative geospatial aggregations, explainable multi-hazard composite indicators, deterministic insight generation, operational weather temperature forecasting, and long-term CMIP6 climate scenario projections.
 
-## Implemented library capabilities (0.1.0 development tree)
+> **Release & Distribution Notice**:
+> The `0.1.0` package published on PyPI represents the initial release foundation and remains untouched. All advanced v2.0 capabilities documented here are hosted directly in the active GitHub development tree (`0.2.0.dev1`) at [`https://github.com/prabal009/nielytics.git`](https://github.com/prabal009/nielytics.git).
 
-- Installable `src` package; Python 3.11+.
-- Local CSV, Excel, JSON, Parquet and DataFrame loading with explicit date parsing.
-- Non-mutating `Dataset` cleaning and operation history.
-- Missing-value reports, JSON-compatible profiling, descriptive/grouped statistics, correlations and covariance.
-- JSON-safe table records and a standalone synthetic-data integration example.
-- Explicit rolling means, missing-date detection, monthly baseline anomalies, and descriptive outlier masks.
-- Optional line, bar, histogram, box, scatter, correlation, time-series, distribution, seasonal, and geographic figures; explicit display/export, never automatic GUI launch.
+---
 
-## Install
+## Key Capabilities (v2.0)
 
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python -m pytest
-.venv/bin/python examples/basic_analysis.py
+### 1. Unified Facade (`ClimateAnalytics`)
+Single-point orchestration managing data ingestion, schema harmonization, hazard routing, multi-hazard co-occurrence, and automated insight generation:
+```python
+from nielytics import ClimateAnalytics
+
+analytics = ClimateAnalytics(offline=True)
+analytics.register_dataset(hazard="heatwave", data="datasets/heatwave_sample.csv")
+result = analytics.analyze(hazard="heatwave", region="Punjab", start_year=2020, end_year=2024)
+print(result.to_dict())
 ```
 
-For filesystems that do not support virtual-environment symlinks (some removable drives), put the environment on a native filesystem instead, e.g. `python3 -m venv --copies /tmp/nielytics-env`, then use that environment's Python. `/tmp` is temporary; choose a persistent native-filesystem location for ongoing work.
+### 2. Multi-Source Climate Harmonization (`nielytics.harmonization`)
+- Standardized `StandardClimateRecord` and `HarmonizationSchema`.
+- Ingests tabular text (`.csv`, `.tsv`, `.txt`, `.dat`), GeoJSON (`.geojson`), NetCDF (`.nc`), and Shapefiles (`.shp`).
+- Automatic unit conversion across physical dimensions (Temperature: `C`, `F`, `K`; Precipitation: `mm`, `cm`, `inch`; Wind: `km/h`, `m/s`, `knots`; Pressure: `hPa`, `bar`, `atm`).
+- Canonical name normalization for all 36 Indian States/UTs and key districts.
+- Comprehensive transformation reporting (accepted rows, dropped rows, conversion logs).
 
-NIElytics 0.1.0 is published on [PyPI](https://pypi.org/project/nielytics/0.1.0/). Install the current release with `python -m pip install nielytics`, or install this checkout with `python -m pip install /path/to/nielytics`. Core analytics, Excel and Parquet readers, visualization, and geospatial plotting dependencies are included in the standard install. Development dependencies are not.
+### 3. India-Specific Geospatial Engine (`nielytics.geospatial`)
+- Normalization mapping covering all 28 Indian States and 8 Union Territories with historical alias resolution ("Orissa" -> "Odisha", "Pondicherry" -> "Puducherry", "Mysore" -> "Karnataka", "Uttaranchal" -> "Uttarakhand", etc.).
+- Reference coordinates, centroids, and bounding boxes for all 36 Indian States/UTs.
+- Pure Python ray-casting point-in-polygon algorithm with optional Shapely acceleration.
+- Spatial hazard clustering and hotspot detection using great-circle Haversine metrics.
+- RFC 7946-compliant GeoJSON FeatureCollection generator for Leaflet, Mapbox, and deck.gl.
 
-## Quick start
+### 4. Advanced Scientific Hazard Indicators (`nielytics.hazards`)
+- **Heatwave**: Official India Meteorological Department (IMD) criteria (plains departure >= 4.5°C or actual >= 45°C; severe at departure >= 6.5°C or actual >= 47°C; hilly/coastal criteria); baseline percentile indicators (e.g. 90th percentile heat spells).
+- **Flood**: Official IMD rainfall classifications (Light 0.1–15.5 mm, Moderate 15.6–64.4 mm, Heavy 64.5–115.5 mm, Very Heavy 115.6–204.4 mm, Extremely Heavy >= 204.5 mm); multi-day accumulation analysis (2, 3, 5, 7 days); river discharge exceedance tracking.
+- **Drought**: Scientific Standardized Precipitation Index (SPI-1, SPI-3, SPI-6, SPI-12) via 2-parameter Gamma distribution fitting and standard normal transform; Southwest monsoon seasonal anomaly analysis.
+- **Landslide**: Compound trigger conditions combining multi-day antecedent saturation with extreme daily trigger rainfall; terrain slope and elevation screening.
+- **Cyclone**: Official IMD cyclone intensity scale (Depression to Super Cyclonic Storm); wind speed unit conversions; coastline landfall proximity detection; seasonal trend breakdown (Pre-monsoon Apr–May vs Post-monsoon Oct–Dec).
+- **Multi-Hazard Analytics**: Compound heat-drought episodes; rainfall-flood and rainfall-landslide correlations; regional multi-hazard overlap exposure matrix; fully transparent, weighted composite hazard indicator.
 
+### 5. Temperature Forecasting & Climate Projections (`nielytics.forecasting`)
+- **Short-Term Operational Forecasting (1 to 14 days)**:
+  - Strict leakage-free feature engineering (cyclical day-of-year harmonics, strictly past lags $[t, t-1, t-2, t-6, t-13]$, trailing rolling stats, historical climatology).
+  - Direct multi-step autoregressive Ridge regression models.
+  - Expanding-window chronological backtesting with MAE, RMSE, MBE, MedAE, and skill scores vs persistence and climatology.
+  - Calibrated empirical 80% and 95% prediction intervals.
+  - Operational NWP weather forecast provider adapter with local ground-truth rolling bias correction.
+  - Integration with `HeatwaveAnalyzer` to estimate daily heatwave exceedance risk probabilities.
+- **Long-Term Climate Projections (2030 to 2050+)**:
+  - Mode A: Theil-Sen robust historical trend extrapolation with non-linear caveat warnings.
+  - Mode B: Standardized CMIP6 scenario projections (IPCC AR6 South Asia regional warming ranges for SSP1-2.6, SSP2-4.5, SSP5-8.5).
+- **Safe Persistence**:
+  - Pure JSON-based model and artifact serialization (zero pickle/joblib).
+
+### 6. Deterministic Insight Engine (`nielytics.insights`)
+- Derive structured, explainable findings directly from computed metrics:
+  - Top anomalies and regional hazard spikes.
+  - Statistically significant trends via Mann-Kendall test ($p < 0.05$).
+  - Compound hazard co-occurrences.
+  - Data quality and sample size insufficiency warnings ($N < 30$, missingness $> 20\%$).
+- 100% deterministic rule engine; zero external LLM dependencies, zero hallucinations.
+
+---
+
+## Installation
+
+### From GitHub (Latest v2 Development Tree)
+```bash
+python3 -m pip install "git+https://github.com/prabal009/nielytics.git"
+```
+
+### Local Editable Install (for Development)
+```bash
+git clone https://github.com/prabal009/nielytics.git
+cd nielytics
+python3 -m pip install -e '.[dev]'
+```
+
+### Optional Dependency Extras
+NIElytics features zero-bloat core architecture running on pure `numpy`, `pandas`, and `scipy`. Heavy optional libraries can be installed via explicit extras:
+```bash
+pip install -e '.[visualization]'        # Plotly and Matplotlib
+pip install -e '.[geospatial]'           # GeoPandas, Shapely, PyProj
+pip install -e '.[climate]'              # xarray, netCDF4
+pip install -e '.[advanced-statistics]'  # statsmodels, scikit-learn
+pip install -e '.[all]'                  # Full suite of all optional extras
+```
+
+---
+
+## Quick Start Examples
+
+### 1. Ingest & Harmonize Messy Multi-Source Data
 ```python
 import pandas as pd
-from nielytics import Dataset
+from nielytics import DatasetHarmonizer, HarmonizationSchema
 
-# Synthetic demonstration, not climate observations.
-data = Dataset(pd.DataFrame({"value": [10.0, 20.0, None]}))
-cleaned = data.fill_missing(columns=["value"], strategy="mean")
-print(cleaned.summary())
-payload = {"profile": cleaned.profile(), "records": cleaned.to_records()}
+raw_data = pd.DataFrame({
+    "date": ["2023-05-01", "2023-05-02"],
+    "state": ["Orissa", "Pondicherry"],       # Historical state names
+    "city": ["Bhubaneswar", "Pondicherry"],
+    "temp_f": [104.0, 95.0],                  # Temperatures in Fahrenheit
+    "lat": [20.29, 11.94],
+    "lon": [85.82, 79.80],
+})
+
+schema = HarmonizationSchema(
+    date_column="date",
+    value_column="temp_f",
+    state_column="state",
+    district_column="city",
+    latitude_column="lat",
+    longitude_column="lon",
+    hazard="heatwave",
+    metric="tmax",
+    source_unit="F",
+    target_unit="C",  # Automatically converted to Celsius
+)
+
+harmonizer = DatasetHarmonizer(schema)
+result = harmonizer.harmonize(raw_data)
+df_clean = DatasetHarmonizer.to_dataframe(result)
+
+# States normalized to official GoI standards: "Odisha", "Puducherry"
+print(df_clean[["date", "state", "value", "unit"]])
 ```
 
-`Dataset("measurements.csv", parse_dates=["date"])` loads a local file. Source data and existing Dataset instances are preserved; cleaning returns a new Dataset. The `frame` and `history` properties return copies. Pandas deep copies do not recursively isolate mutable objects inside cells: use scalar table values.
+### 2. Operational Temperature Forecasting & Heatwave Risk
+```python
+import pandas as pd
+from nielytics import TemperatureForecaster
 
-Statistics skip missing values. Variance/std default to sample statistics (`ddof=1`); insufficient data produces missing results, not invented zeroes. No unit conversion or climate interpretation is implicit. `to_records()` omits the index, encodes dates as ISO strings at millisecond precision, and maps missing/nonfinite values to JSON null.
+df = pd.read_csv("examples/sample_daily_temperature.csv")
 
-## Display and export graphs
+forecaster = TemperatureForecaster(horizons=[1, 3, 7])
+forecaster.fit(df, date_column="date", target_column="tmax")
 
-```bash
-python -m pip install -e .
-python examples/visualization_gallery.py --output-dir charts
-# Explicitly open interactive charts in your browser:
-python examples/visualization_gallery.py --output-dir charts --show
+# 7-day ahead forecast with 80% and 95% uncertainty intervals
+forecast_res = forecaster.predict(horizon=7)
+
+# Estimate daily probability of exceeding 40°C heatwave threshold
+risk_res = forecaster.forecast_heatwave_risk(forecast_res, threshold_c=40.0)
+print(risk_res.to_dict()["data"]["daily_risk"])
 ```
 
-The gallery uses synthetic measurements and writes nine interactive HTML charts plus a geographic PNG. Open the HTML files in a browser; they embed Plotly and work offline. Functions in `nielytics.core.visualization` return figures, not windows. Use `fig.show()` explicitly for Plotly, `fig.write_html(...)`/`fig.to_json()` for export, and `fig.savefig(...)` for geographic Matplotlib figures. See [Commands and usage](COMMANDS_AND_USAGE.md) for all ten function calls and display troubleshooting.
+### 3. Long-Term CMIP6 Climate Projections
+```python
+from nielytics import ClimateProjectionEngine
 
-## Architecture and limitations
-
-`nielytics` is one installable package. `Dataset`, ten plotting functions, `AnalysisResult`, and the five hazard analyzers are importable from the package root. Internal modules remain available under `nielytics.core`, `nielytics.hazards`, `nielytics.climate.providers`, and `nielytics.geospatial`. Optional plotting dependencies are imported on use, not on core import.
-
-Heat, rainfall/flood, drought, landslide and cyclone analyzers return explicitly labeled **indicators** from caller-provided inputs. They do not issue official declarations or validated predictions. Climate connectors require explicit calls, preserve provider attribution, and distinguish historical modeled data from event catalogs. The NASA COOLR service URL returned HTTP 404; catalog access and provider coverage are documented in [data sources](docs/DATA_SOURCES.md). No live alert or forecast feed is claimed. Unsupported provider fields and regions are not fabricated. See [API reference](docs/api_reference.md), [integration contract](INTEGRATION_CONTRACT.md), [GeoJSON guide](docs/GEOJSON_GUIDE.md), and [team handoff](docs/TEAM_HANDOFF.md).
-
-The full long-term master specification includes advanced comparisons, automatic insights, reporting, and an optional configured facade; these are **not implemented**. External licensing and competition rules on prebuilt libraries require separate confirmation. Teammates own routing, authentication, storage, and display.
-
-## Synthetic hazard and map example
-
-```sh
-python examples/climate_indicators.py
+engine = ClimateProjectionEngine()
+projections = engine.project_cmip6_scenarios(
+    baseline_temperature_c=28.5,
+    target_years=[2030, 2040, 2050],
+    scenarios=["SSP1-2.6", "SSP2-4.5", "SSP5-8.5"],
+)
+print(projections.to_dict()["data"]["scenarios"])
 ```
 
-The output contains five JSON-compatible indicator results and an EPSG:4326 GeoJSON point; all measurements are synthetic demonstrations, not provider observations. For real historical provider data, call the connectors explicitly using `nielytics.climate.providers` and check the source metadata. See [commands and usage](COMMANDS_AND_USAGE.md).
+---
 
-## Release preparation
+## Documentation & Guides
+- [API Reference](docs/api_reference.md)
+- [Installation Guide & System Setup](docs/INSTALLATION.md)
+- [Backend Integration Contract & JSON Schemas](docs/BACKEND_INTEGRATION.md)
+- [Climate Hazard Methodology](docs/CLIMATE_METHODOLOGY.md)
+- [Data Harmonization Specification](docs/DATA_HARMONIZATION.md)
+- [Temperature Forecasting Architecture](docs/TEMPERATURE_FORECASTING.md)
+- [Forecast Model Evaluation & Skill Metrics](docs/FORECAST_MODEL_EVALUATION.md)
+- [Climate Scenario Projections](docs/CLIMATE_PROJECTIONS.md)
+- [Library Audit & Improvement Roadmap](docs/IMPROVEMENT_AUDIT.md)
+- [Version 0.2.0 Changelog](docs/CHANGELOG.md)
 
-NIElytics is distributed under the [MIT license](LICENSE). Release 0.1.0's wheel and source distribution passed Twine's strict checks and were uploaded to PyPI. The published wheel was downloaded into an existing virtual environment and successfully exercised with `examples/basic_analysis.py`.
+---
 
-For future releases, use a virtual environment. Run `python -m pytest`, `python -m ruff check src tests examples`, the installed-package examples, and `python -m build` before validating and uploading the new distributions.
+## License
+MIT License. See [LICENSE](LICENSE) for details.

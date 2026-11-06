@@ -236,3 +236,179 @@ def modes(
     """
     selected = _selected_columns(frame, columns, numeric=False)
     return frame.loc[:, selected].mode(dropna=True)
+
+
+def z_score(
+    frame: pd.DataFrame,
+    columns: Iterable[Hashable] | None = None,
+    *,
+    ddof: int = 1,
+) -> pd.DataFrame:
+    """Compute z-scores ((x - mean) / std) for real numeric columns.
+
+    Columns with zero sample variance or single observations yield 0.0.
+    Missing values remain NaN. Returns a non-mutating copy.
+    """
+    _validate_ddof(ddof)
+    selected = _selected_columns(frame, columns)
+    result = pd.DataFrame(index=frame.index)
+    for col in selected:
+        series = frame[col].astype(float)
+        mean = series.mean()
+        std = series.std(ddof=ddof)
+        if pd.isna(std) or std < 1e-12:
+            col_z = series.where(series.isna(), 0.0)
+        else:
+            col_z = (series - mean) / std
+        result[col] = col_z
+    return result
+
+
+def linear_regression(
+    frame: pd.DataFrame,
+    x_col: Hashable,
+    y_col: Hashable,
+    *,
+    confidence_level: float = 0.95,
+) -> dict[str, Any]:
+    """Ordinary least squares linear regression with Student-t confidence intervals.
+
+    Returns a strictly JSON-serializable dictionary with slope, intercept,
+    r-squared, p-value, standard error, and slope confidence bounds.
+    """
+    from scipy import stats
+
+    _selected_columns(frame, [x_col, y_col])
+    if not (0.0 < confidence_level < 1.0):
+        raise ValidationError("confidence_level must be between 0 and 1 exclusive.")
+
+    valid = frame[[x_col, y_col]].dropna()
+    x = valid[x_col].to_numpy(dtype=float)
+    y = valid[y_col].to_numpy(dtype=float)
+
+    if len(x) < 3:
+        raise ValidationError("linear_regression requires at least 3 valid observations.")
+
+    res = stats.linregress(x, y)
+    n = len(x)
+    df = n - 2
+    t_crit = float(stats.t.ppf((1.0 + confidence_level) / 2.0, df=df))
+    slope_err = float(res.stderr) if res.stderr is not None else 0.0
+    moe = t_crit * slope_err
+
+    return {
+        "slope": float(round(res.slope, 6)),
+        "intercept": float(round(res.intercept, 6)),
+        "r_value": float(round(res.rvalue, 6)),
+        "r_squared": float(round(res.rvalue ** 2, 6)),
+        "p_value": float(round(res.pvalue, 6)),
+        "std_err": float(round(slope_err, 6)),
+        "slope_ci_lower": float(round(res.slope - moe, 6)),
+        "slope_ci_upper": float(round(res.slope + moe, 6)),
+        "confidence_level": float(confidence_level),
+        "n_observations": int(n),
+    }
+
+
+def theil_sen_slope(
+    frame: pd.DataFrame,
+    y_col: Hashable,
+    x_col: Hashable | None = None,
+    *,
+    alpha: float = 0.95,
+) -> dict[str, Any]:
+    """Compute robust nonparametric Theil-Sen trend slope and confidence bounds.
+
+    Resistant to up to 29% outliers. If `x_col` is None, integer row indices are used.
+    """
+    from scipy import stats
+
+    _selected_columns(frame, [y_col])
+    if x_col is not None:
+        _selected_columns(frame, [x_col])
+        valid = frame[[x_col, y_col]].dropna()
+        x = valid[x_col].to_numpy(dtype=float)
+        y = valid[y_col].to_numpy(dtype=float)
+    else:
+        valid_y = frame[y_col].dropna()
+        x = np.arange(len(valid_y), dtype=float)
+        y = valid_y.to_numpy(dtype=float)
+
+    if len(y) < 3:
+        raise ValidationError("theil_sen_slope requires at least 3 valid observations.")
+
+    res = stats.theilslopes(y, x, alpha=alpha)
+    return {
+        "slope": float(round(res.slope, 6)),
+        "intercept": float(round(res.intercept, 6)),
+        "slope_ci_lower": float(round(res.low_slope, 6)),
+        "slope_ci_upper": float(round(res.high_slope, 6)),
+        "alpha": float(alpha),
+        "n_observations": int(len(y)),
+    }
+
+
+def mann_kendall_test(
+    series: Any,
+    *,
+    alpha: float = 0.05,
+) -> dict[str, Any]:
+    """Nonparametric Mann-Kendall trend test with tie correction.
+
+    Calculates Kendall's S statistic, variance with tie adjustment, standard normal
+    test statistic Z, two-tailed p-value, and trend classification.
+    """
+    from scipy import stats
+
+    if isinstance(series, pd.DataFrame):
+        raise ValidationError("mann_kendall_test requires a 1D Series or Sequence.")
+    if isinstance(series, pd.Series):
+        clean = series.dropna().to_numpy(dtype=float)
+    else:
+        arr = np.asarray(series, dtype=float)
+        clean = arr[np.isfinite(arr)]
+
+    n = len(clean)
+    if n < 3:
+        raise ValidationError("mann_kendall_test requires at least 3 valid observations.")
+
+    i_idx, j_idx = np.triu_indices(n, k=1)
+    pair_diffs = clean[j_idx] - clean[i_idx]
+    s = int(np.sum(np.sign(pair_diffs)))
+
+    # Tie correction for variance
+    _, counts = np.unique(clean, return_counts=True)
+    tie_term = int(np.sum(counts * (counts - 1) * (2 * counts + 5)))
+    var_s = (n * (n - 1) * (2 * n + 5) - tie_term) / 18.0
+
+    if var_s <= 0:
+        sigma_s = 1.0
+    else:
+        sigma_s = float(np.sqrt(var_s))
+
+    if s > 0:
+        z = (s - 1.0) / sigma_s
+    elif s == 0:
+        z = 0.0
+    else:
+        z = (s + 1.0) / sigma_s
+
+    p_value = float(2.0 * (1.0 - stats.norm.cdf(abs(z))))
+    total_pairs = n * (n - 1) / 2.0
+    tau = float(s / total_pairs) if total_pairs > 0 else 0.0
+
+    if p_value < alpha:
+        trend = "increasing" if z > 0 else "decreasing"
+    else:
+        trend = "no_trend"
+
+    return {
+        "s": int(s),
+        "z": float(round(z, 4)),
+        "p_value": float(round(p_value, 6)),
+        "tau": float(round(tau, 4)),
+        "variance_s": float(round(var_s, 4)),
+        "trend": trend,
+        "alpha": float(alpha),
+        "n_observations": int(n),
+    }

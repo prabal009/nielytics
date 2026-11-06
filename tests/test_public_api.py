@@ -5,14 +5,25 @@ import json
 import pandas as pd
 import pytest
 
+from nielytics.exceptions import OptionalDependencyError
 from nielytics import (
     AnalysisResult,
+    ClimateAnalytics,
+    ClimateProjectionEngine,
     CycloneAnalyzer,
     Dataset,
+    DatasetHarmonizer,
     DroughtAnalyzer,
     FloodAnalyzer,
+    HarmonizationSchema,
     HeatwaveAnalyzer,
+    Insight,
+    InsightEngine,
     LandslideAnalyzer,
+    MultiHazardAnalyzer,
+    StandardClimateRecord,
+    TemperatureForecaster,
+    __version__,
     plot_bar,
     plot_geographic,
     plot_line,
@@ -53,7 +64,12 @@ def test_root_charts_are_existing_implementations():
     )
     frame = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
     assert Dataset(frame).summary().loc["y", "mean"] == 3.5
-    assert list(plot_line(frame, "x", "y").data[0].y) == [3, 4]
+    try:
+        import plotly  # noqa: F401
+        assert list(plot_line(frame, "x", "y").data[0].y) == [3, 4]
+    except ImportError:
+        with pytest.raises(OptionalDependencyError):
+            plot_line(frame, "x", "y")
 
 
 def test_result_rejects_non_json_and_preserves_data():
@@ -69,3 +85,16 @@ def test_result_rejects_non_json_and_preserves_data():
     assert result.to_dict()["data"]["value"] == 4
     with pytest.raises(ValueError):
         AnalysisResult("invalid", {"value": float("nan")}, {}).to_dict()
+
+
+def test_v2_root_exports_and_version():
+    assert __version__ == "0.2.0.dev1"
+    assert ClimateAnalytics is not None
+    assert TemperatureForecaster is not None
+    assert ClimateProjectionEngine is not None
+    assert DatasetHarmonizer is not None
+    assert MultiHazardAnalyzer is not None
+    assert InsightEngine is not None
+    assert Insight is not None
+    assert HarmonizationSchema is not None
+    assert StandardClimateRecord is not None

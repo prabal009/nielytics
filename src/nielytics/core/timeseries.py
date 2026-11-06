@@ -95,3 +95,96 @@ def calculate_anomalies(frame: pd.DataFrame, date: Hashable, value: Hashable, *,
     result["baseline"] = result["date"].dt.month.map(means)
     result["anomaly"] = result["value"] - result["baseline"]
     return result
+
+
+def decompose_timeseries(
+    frame: pd.DataFrame,
+    date: Hashable,
+    value: Hashable,
+    *,
+    period: int = 365,
+    model: str = "additive",
+) -> pd.DataFrame:
+    """Decompose time series into trend, seasonal, and residual components.
+
+    Uses centered moving average for trend estimation and cyclic detrended
+    averaging for seasonal components.
+    """
+    if isinstance(period, bool) or not isinstance(period, Integral) or period < 2:
+        raise ValidationError("period must be an integer >= 2.")
+    if model not in ("additive", "multiplicative"):
+        raise ValidationError("model must be 'additive' or 'multiplicative'.")
+
+    series = _series(frame, date, value)
+    if len(series) < period:
+        raise ValidationError(f"decompose_timeseries requires at least {period} observations (got {len(series)}).")
+
+    vals = series["value"]
+    if model == "multiplicative" and (vals <= 0).any():
+        raise ValidationError("multiplicative decomposition requires strictly positive values.")
+
+    trend = vals.rolling(window=period, center=True, min_periods=period).mean()
+
+    if model == "additive":
+        detrended = vals - trend
+    else:
+        detrended = vals / trend
+
+    cycle_key = np.arange(len(series)) % period
+    seasonal_means = detrended.groupby(cycle_key).transform("mean")
+    cycle_mean = detrended.groupby(cycle_key).mean().mean()
+
+    if model == "additive":
+        seasonal = seasonal_means - cycle_mean
+        residual = vals - trend - seasonal
+    else:
+        seasonal = seasonal_means / cycle_mean
+        residual = vals / (trend * seasonal)
+
+    return pd.DataFrame({
+        "date": series["date"],
+        "value": vals,
+        "trend": trend,
+        "seasonal": seasonal,
+        "residual": residual,
+    })
+
+
+def detect_anomalies(
+    frame: pd.DataFrame,
+    date: Hashable,
+    value: Hashable,
+    *,
+    baseline_start: str | None = None,
+    baseline_end: str | None = None,
+    method: str = "z_score",
+    threshold: float = 3.0,
+) -> pd.DataFrame:
+    """Detect anomalies relative to climatological baseline or historical mean.
+
+    Returns a DataFrame with date, value, baseline, anomaly departure, z_score,
+    and boolean is_anomaly flag.
+    """
+    if method not in ("z_score", "zscore"):
+        raise ValidationError("Currently supported anomaly detection method is 'z_score'.")
+    if threshold <= 0:
+        raise ValidationError("threshold must be a positive number.")
+
+    if baseline_start is not None and baseline_end is not None:
+        res = calculate_anomalies(frame, date, value, baseline_start=baseline_start, baseline_end=baseline_end)
+    else:
+        res = _series(frame, date, value)
+        base_val = float(res["value"].mean())
+        res["baseline"] = base_val
+        res["anomaly"] = res["value"] - base_val
+
+    anom = res["anomaly"]
+    std_val = float(anom.std(ddof=1)) if len(anom) > 1 else 0.0
+    if std_val > 1e-12:
+        z_scores = (anom - anom.mean()) / std_val
+    else:
+        z_scores = pd.Series(0.0, index=res.index)
+
+    res["z_score"] = z_scores
+    res["is_anomaly"] = z_scores.abs() > threshold
+    return res

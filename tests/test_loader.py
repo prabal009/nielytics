@@ -2,7 +2,17 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from nielytics.core.loader import load_csv, load_dataset, load_excel, load_json, load_parquet
+from nielytics.core.loader import (
+    load_csv,
+    load_dataset,
+    load_excel,
+    load_geojson_table,
+    load_json,
+    load_netcdf,
+    load_parquet,
+    load_shapefile,
+    load_text,
+)
 from nielytics.exceptions import (
     DataLoadError,
     OptionalDependencyError,
@@ -135,3 +145,67 @@ def test_reader_must_return_single_frame(tmp_path, monkeypatch):
     monkeypatch.setattr(pd, "read_excel", lambda *args, **kwargs: {"sheet": pd.DataFrame()})
     with pytest.raises(DataLoadError, match="single DataFrame"):
         load_excel(path, sheet_name=None)
+
+
+def test_load_text_and_tsv(tmp_path):
+    tsv_path = tmp_path / "data.tsv"
+    tsv_path.write_text("a\tb\n1\t2\n3\t4\n")
+    df_tsv = load_text(tsv_path)
+    assert list(df_tsv.columns) == ["a", "b"]
+    assert len(df_tsv) == 2
+    assert df_tsv.iloc[0]["a"] == 1
+
+    txt_path = tmp_path / "data.txt"
+    txt_path.write_text("col1|col2\nval1|val2\n")
+    df_txt = load_text(txt_path, delimiter="|")
+    assert list(df_txt.columns) == ["col1", "col2"]
+    assert df_txt.iloc[0]["col1"] == "val1"
+
+
+def test_load_geojson_table(tmp_path):
+    import json
+    geo_path = tmp_path / "points.geojson"
+    data = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "Station A", "temp": 28.5},
+                "geometry": {"type": "Point", "coordinates": [77.59, 12.97]},
+            },
+            {
+                "type": "Feature",
+                "properties": {"name": "Station B", "temp": 30.1},
+                "geometry": {"type": "Point", "coordinates": [72.87, 19.07]},
+            },
+        ],
+    }
+    geo_path.write_text(json.dumps(data))
+    df = load_geojson_table(geo_path)
+    assert len(df) == 2
+    assert "name" in df.columns
+    assert "latitude" in df.columns
+    assert "longitude" in df.columns
+    assert df.iloc[0]["latitude"] == 12.97
+    assert df.iloc[0]["longitude"] == 77.59
+
+
+def test_load_netcdf_and_shapefile_optional_guards(tmp_path):
+    nc_path = tmp_path / "dummy.nc"
+    nc_path.touch()
+    try:
+        import xarray  # noqa: F401
+    except ImportError:
+        try:
+            import netCDF4  # noqa: F401
+        except ImportError:
+            with pytest.raises(OptionalDependencyError):
+                load_netcdf(nc_path)
+
+    shp_path = tmp_path / "dummy.shp"
+    shp_path.touch()
+    try:
+        import geopandas  # noqa: F401
+    except ImportError:
+        with pytest.raises(OptionalDependencyError):
+            load_shapefile(shp_path)

@@ -49,3 +49,18 @@ def test_failed_clean_does_not_change_dataset():
 def test_nonfinite_values_serialize_as_null():
     dataset = Dataset(pd.DataFrame({"value": [np.inf, -np.inf, np.nan]}))
     assert dataset.to_records() == [{"value": None}] * 3
+
+
+def test_dataset_convert_units_and_quality_report():
+    ds = Dataset(pd.DataFrame({"t": [20.0, 30.0]}))
+    ds_f = ds.convert_units("t", "C", "F")
+    assert ds_f.frame["t"].iloc[0] == pytest.approx(68.0)
+    assert len(ds_f.history) == 1
+    assert ds_f.history[0]["operation"] == "convert_units"
+
+    q = ds.quality_report()
+    assert q["total_rows"] == 2
+    assert "quality_score" in q
+
+    outliers = ds.detect_outliers()
+    assert "t_outlier" in outliers.columns

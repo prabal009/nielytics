@@ -106,3 +106,102 @@ class LandslideAnalyzer:
                                   "end": records[event_date_column].max().date().isoformat()},
                        "method": "counts of supplied records; not an exhaustive catalog"},
                       [], "Historical event records are not live landslide warnings.")
+
+    def rainfall_trigger_indicator(
+        self,
+        antecedent_window_days: int = 3,
+        antecedent_threshold_mm: float = 100.0,
+        trigger_rainfall_threshold_mm: float = 50.0,
+    ) -> AnalysisResult:
+        """Identify compound landslide trigger episodes combining antecedent saturation and trigger daily rainfall."""
+        window = positive_int(antecedent_window_days, "antecedent_window_days")
+        ant_cutoff = threshold(antecedent_threshold_mm, "antecedent_threshold_mm", minimum=0)
+        trig_cutoff = threshold(trigger_rainfall_threshold_mm, "trigger_rainfall_threshold_mm", minimum=0)
+
+        antecedent_records = self._antecedent(window)
+        ant_dict = {item["date"]: item["antecedent_mm"] for item in antecedent_records}
+
+        trigger_events: list[dict[str, Any]] = []
+        for _, row in self._data.iterrows():
+            d_str = row[self.date_column].strftime("%Y-%m-%d")
+            daily_rain = float(row[self.rainfall_column]) if pd.notna(row[self.rainfall_column]) else 0.0
+            ant_rain = ant_dict.get(d_str, 0.0)
+
+            if ant_rain >= ant_cutoff and daily_rain >= trig_cutoff:
+                trigger_events.append({
+                    "date": d_str,
+                    "daily_rainfall_mm": float(round(daily_rain, 2)),
+                    "antecedent_rainfall_mm": float(round(ant_rain, 2)),
+                    "combined_rainfall_mm": float(round(daily_rain + ant_rain, 2)),
+                })
+
+        warning = "Compound antecedent and daily rainfall triggers serve as screening proxies, not physical slope stability models."
+        return result(
+            "landslide_rainfall_trigger_indicator",
+            {
+                "trigger_events_count": len(trigger_events),
+                "events": trigger_events,
+            },
+            metadata(
+                self._data,
+                self.date_column,
+                {"rainfall": "mm"},
+                antecedent_window_days=window,
+                antecedent_threshold_mm=ant_cutoff,
+                trigger_rainfall_threshold_mm=trig_cutoff,
+                location=self.location,
+            ),
+            [warning, *warnings_for(self._data, self.date_column, (self.rainfall_column,))],
+            _CAVEAT,
+        )
+
+    def slope_elevation_screening(
+        self,
+        min_slope_degrees: float = 15.0,
+        elevation_column: str | None = None,
+        min_elevation_m: float | None = None,
+    ) -> AnalysisResult:
+        """Screen terrain based on slope angle and optional elevation thresholds."""
+        slope_cutoff = threshold(min_slope_degrees, "min_slope_degrees", minimum=0)
+        if slope_cutoff > 90:
+            raise ValidationError("min_slope_degrees cannot exceed 90 degrees.")
+        df = self._data.copy()
+        steep_mask = df[self.slope_column] >= slope_cutoff
+
+        if elevation_column and elevation_column in df.columns and min_elevation_m is not None:
+            elev_mask = df[elevation_column] >= min_elevation_m
+            combined_mask = steep_mask & elev_mask
+        else:
+            combined_mask = steep_mask
+
+        steep_days_count = int(combined_mask.sum())
+        warning = "Slope and elevation screening are terrain proxies, not geotechnical landslide hazard micro-zonations."
+        return result(
+            "slope_elevation_screening",
+            {
+                "steep_terrain_days": steep_days_count,
+                "total_observations": len(df),
+                "min_slope_degrees": slope_cutoff,
+                "min_elevation_m": min_elevation_m,
+            },
+            metadata(self._data, self.date_column, {"slope": "degrees"}, location=self.location),
+            [warning, *warnings_for(self._data, self.date_column, (self.slope_column,))],
+            _CAVEAT,
+        )
+
+    def regional_landslide_summary(
+        self,
+        data: pd.DataFrame | None = None,
+        state_column: str = "state",
+    ) -> AnalysisResult:
+        """Aggregate landslide metrics and rainfall proxies across Indian States."""
+        from nielytics.geospatial.aggregation import aggregate_hazards_by_region
+        source_df = data if data is not None else self._data
+        return aggregate_hazards_by_region(
+            source_df,
+            region_type="state",
+            region_column=state_column,
+            hazard_column="hazard" if "hazard" in source_df.columns else self.rainfall_column,
+            value_column=self.rainfall_column,
+            date_column=self.date_column,
+        )

@@ -80,3 +80,153 @@ class HeatwaveAnalyzer:
                        "observed_days": int(observed[self.temperature_column].count())},
                       meta, [warning, *warnings_for(self._data, self.date_column,
                                                     (self.temperature_column,))], _CAVEAT)
+
+    def imd_heatwave_classification(
+        self,
+        normal_tmax: float | None = None,
+        terrain: str = "plains",
+    ) -> AnalysisResult:
+        """Classify days according to official India Meteorological Department (IMD) heatwave criteria.
+
+        Supports terrains: 'plains', 'hilly', and 'coastal'.
+        Evaluates departures from normal when `normal_tmax` is provided, as well
+        as absolute maximum temperature criteria.
+        """
+        if terrain not in ("plains", "hilly", "coastal"):
+            raise ValidationError("terrain must be 'plains', 'hilly', or 'coastal'.")
+        if normal_tmax is not None and (normal_tmax < -20.0 or normal_tmax > 60.0):
+            raise ValidationError("normal_tmax must be a realistic temperature in degrees Celsius.")
+
+        classified_days: list[dict[str, Any]] = []
+        counts = {"no_heatwave": 0, "heatwave": 0, "severe_heatwave": 0}
+
+        for _, row in self._data.iterrows():
+            val = row[self.temperature_column]
+            d_str = row[self.date_column].strftime("%Y-%m-%d")
+            if pd.isna(val):
+                continue
+            tmax = float(val)
+            classification = "no_heatwave"
+
+            if terrain == "plains":
+                # Absolute thresholds
+                if tmax >= 47.0:
+                    classification = "severe_heatwave"
+                elif tmax >= 45.0:
+                    classification = "heatwave"
+                elif normal_tmax is not None and tmax >= 40.0:
+                    dep = tmax - normal_tmax
+                    if dep >= 6.5:
+                        classification = "severe_heatwave"
+                    elif dep >= 4.5:
+                        classification = "heatwave"
+            elif terrain == "hilly":
+                if normal_tmax is not None and tmax >= 30.0:
+                    dep = tmax - normal_tmax
+                    if dep >= 6.5:
+                        classification = "severe_heatwave"
+                    elif dep >= 4.5:
+                        classification = "heatwave"
+                elif tmax >= 35.0:
+                    classification = "heatwave"
+            else:  # coastal
+                if normal_tmax is not None and tmax >= 37.0:
+                    dep = tmax - normal_tmax
+                    if dep >= 6.5:
+                        classification = "severe_heatwave"
+                    elif dep >= 4.5:
+                        classification = "heatwave"
+                elif tmax >= 40.0:
+                    classification = "heatwave"
+
+            counts[classification] += 1
+            if classification != "no_heatwave":
+                classified_days.append({
+                    "date": d_str,
+                    "tmax": tmax,
+                    "classification": classification,
+                    "departure": float(round(tmax - normal_tmax, 2)) if normal_tmax is not None else None,
+                })
+
+        meta = metadata(
+            self._data,
+            self.date_column,
+            {"temperature": "C"},
+            standard="India Meteorological Department (IMD)",
+            terrain=terrain,
+            normal_tmax=normal_tmax,
+            location=self.location,
+        )
+        warning = "IMD heatwave criteria require at least two stations meeting conditions in a subdivision for official declaration."
+        return result(
+            "imd_heatwave_classification",
+            {
+                "total_days": len(self._data),
+                "counts": counts,
+                "events": classified_days,
+            },
+            meta,
+            [warning, *warnings_for(self._data, self.date_column, (self.temperature_column,))],
+            _CAVEAT,
+        )
+
+    def percentile_heatwave_indicators(
+        self,
+        baseline_start: str,
+        baseline_end: str,
+        percentile: float = 90.0,
+        consecutive_days: int = 3,
+    ) -> AnalysisResult:
+        """Detect heat spells where maximum temperature exceeds a historical baseline percentile."""
+        if not (0.0 < percentile < 100.0):
+            raise ValidationError("percentile must be between 0 and 100 exclusive.")
+        base = period(self._data, self.date_column, baseline_start, baseline_end)
+        if len(base) < 10:
+            raise ValidationError("baseline requires at least 10 observations for percentile calculation.")
+        threshold_c = float(base[self.temperature_column].quantile(percentile / 100.0))
+        return self.heat_spell_duration(threshold_c=threshold_c, minimum_days=consecutive_days)
+
+    def historical_heatwave_frequency(self, threshold_c: float = 40.0) -> AnalysisResult:
+        """Calculate annual event frequencies and long-term trend of extreme heat days."""
+        cutoff = threshold(threshold_c, "threshold_c")
+        df = self._data.copy()
+        df["year"] = df[self.date_column].dt.year
+        annual_counts = df[df[self.temperature_column] >= cutoff].groupby("year").size().to_dict()
+        all_years = sorted(df["year"].unique())
+        counts_series = [int(annual_counts.get(y, 0)) for y in all_years]
+
+        from nielytics.core.statistics import mann_kendall_test
+        trend_res = None
+        if len(counts_series) >= 3:
+            trend_res = mann_kendall_test(counts_series)
+
+        return result(
+            "historical_heatwave_frequency",
+            {
+                "threshold_c": cutoff,
+                "years": all_years,
+                "annual_frequencies": dict(zip([str(y) for y in all_years], counts_series)),
+                "trend_analysis": trend_res,
+            },
+            metadata(self._data, self.date_column, {"temperature": "C"}, threshold_c=cutoff, location=self.location),
+            warnings_for(self._data, self.date_column, (self.temperature_column,)),
+            _CAVEAT,
+        )
+
+    def regional_heat_summary(
+        self,
+        data: pd.DataFrame | None = None,
+        state_column: str = "state",
+        district_column: str | None = None,
+    ) -> AnalysisResult:
+        """Aggregate heatwave metrics across Indian States or Districts."""
+        from nielytics.geospatial.aggregation import aggregate_hazards_by_region
+        source_df = data if data is not None else self._data
+        return aggregate_hazards_by_region(
+            source_df,
+            region_type="state" if district_column is None else "district",
+            region_column=state_column if district_column is None else district_column,
+            hazard_column="hazard" if "hazard" in source_df.columns else self.temperature_column,
+            value_column=self.temperature_column,
+            date_column=self.date_column,
+        )

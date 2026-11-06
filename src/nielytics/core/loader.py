@@ -19,6 +19,10 @@ from nielytics.exceptions import (
 _FORMATS = {
     "csv": "csv", "xls": "excel", "xlsx": "excel", "xlsm": "excel",
     "excel": "excel", "json": "json", "parquet": "parquet", "pq": "parquet",
+    "tsv": "text", "txt": "text", "dat": "text", "text": "text",
+    "geojson": "geojson",
+    "nc": "netcdf", "nc4": "netcdf", "netcdf": "netcdf",
+    "shp": "shapefile", "shapefile": "shapefile",
 }
 DateColumns = str | Sequence[Any] | Mapping[Any, str | None]
 
@@ -77,6 +81,67 @@ def load_dataset(
                 # Use the same explicit date-conversion contract for all formats.
                 options = {"convert_dates": False, **kwargs}
                 frame = pd.read_json(path, encoding=encoding, **options)
+            elif selected_format == "text":
+                sep = kwargs.pop("sep", kwargs.pop("delimiter", None))
+                if sep is None and path.suffix.lower() == ".tsv":
+                    sep = "\t"
+                if sep is not None:
+                    frame = pd.read_csv(path, sep=sep, encoding=encoding, **kwargs)
+                else:
+                    frame = pd.read_csv(path, sep=None, engine="python", encoding=encoding, **kwargs)
+            elif selected_format == "geojson":
+                import json as _json
+                with open(path, "r", encoding=encoding) as f:
+                    gj = _json.load(f)
+                if not isinstance(gj, dict):
+                    raise DataLoadError(f"Invalid GeoJSON content in {path}")
+                features = gj.get("features", [])
+                if not isinstance(features, list):
+                    raise DataLoadError(f"GeoJSON does not contain a valid features array in {path}")
+                rows = []
+                for feat in features:
+                    props = feat.get("properties", {}) or {}
+                    row = dict(props)
+                    geom = feat.get("geometry")
+                    if geom and isinstance(geom, dict):
+                        coords = geom.get("coordinates")
+                        geom_type = geom.get("type", "")
+                        if geom_type == "Point" and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                            if "longitude" not in row and "lon" not in row:
+                                row["longitude"] = float(coords[0])
+                            if "latitude" not in row and "lat" not in row:
+                                row["latitude"] = float(coords[1])
+                        row["geometry"] = geom
+                    rows.append(row)
+                frame = pd.DataFrame(rows)
+            elif selected_format == "netcdf":
+                try:
+                    import xarray as xr
+                    ds = xr.open_dataset(path, **kwargs)
+                    frame = ds.to_dataframe().reset_index()
+                except ImportError:
+                    try:
+                        import netCDF4  # noqa: F401
+                        nc = netCDF4.Dataset(path)
+                        data = {}
+                        for var_name, var in nc.variables.items():
+                            arr = var[:]
+                            if getattr(arr, "ndim", 0) == 1:
+                                data[var_name] = arr
+                        frame = pd.DataFrame(data)
+                    except ImportError as exc:
+                        raise OptionalDependencyError(
+                            "Loading NetCDF datasets requires 'xarray' or 'netCDF4'; install with pip install '.[climate]'"
+                        ) from exc
+            elif selected_format == "shapefile":
+                try:
+                    import geopandas as gpd
+                    gdf = gpd.read_file(path, **kwargs)
+                    frame = pd.DataFrame(gdf)
+                except ImportError as exc:
+                    raise OptionalDependencyError(
+                        "Loading Shapefiles requires 'geopandas'; install with pip install '.[geospatial]'"
+                    ) from exc
             else:
                 frame = pd.read_parquet(path, **kwargs)
         except ImportError as exc:
@@ -115,3 +180,24 @@ def load_json(source: str | os.PathLike[str], **kwargs: Any) -> pd.DataFrame:
 def load_parquet(source: str | os.PathLike[str], **kwargs: Any) -> pd.DataFrame:
     """Load a local Parquet file; options follow :func:`load_dataset`."""
     return load_dataset(source, format="parquet", **kwargs)
+
+def load_text(source: str | os.PathLike[str], delimiter: str | None = None, **kwargs: Any) -> pd.DataFrame:
+    """Load a delimited or tabular text file (.txt, .tsv, .dat)."""
+    if delimiter is not None:
+        kwargs["sep"] = delimiter
+    return load_dataset(source, format="text", **kwargs)
+
+
+def load_geojson_table(source: str | os.PathLike[str], **kwargs: Any) -> pd.DataFrame:
+    """Extract properties and coordinates from a GeoJSON FeatureCollection into a DataFrame."""
+    return load_dataset(source, format="geojson", **kwargs)
+
+
+def load_netcdf(source: str | os.PathLike[str], **kwargs: Any) -> pd.DataFrame:
+    """Load NetCDF dataset as a DataFrame using xarray or netCDF4."""
+    return load_dataset(source, format="netcdf", **kwargs)
+
+
+def load_shapefile(source: str | os.PathLike[str], **kwargs: Any) -> pd.DataFrame:
+    """Load Shapefile as a DataFrame using geopandas."""
+    return load_dataset(source, format="shapefile", **kwargs)
