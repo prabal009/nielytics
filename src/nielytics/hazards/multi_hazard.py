@@ -92,7 +92,7 @@ class MultiHazardAnalyzer:
         correlations: list[dict[str, Any]] = []
         for _, row in f_df.iterrows():
             f_date = row[flood_date_col]
-            start_date = f_date - pd.Timedelta(days=antecedent_days)
+            start_date = f_date - pd.DateOffset(days=antecedent_days)
             prior_rain = r_df.loc[start_date:f_date, rainfall_col]
             tot_rain = float(prior_rain.sum()) if len(prior_rain) > 0 else 0.0
 
@@ -138,7 +138,7 @@ class MultiHazardAnalyzer:
         correlations: list[dict[str, Any]] = []
         for _, row in l_df.iterrows():
             l_date = row[landslide_date_col]
-            start_date = l_date - pd.Timedelta(days=antecedent_days)
+            start_date = l_date - pd.DateOffset(days=antecedent_days)
             prior_rain = r_df.loc[start_date:l_date, rainfall_col]
             tot_rain = float(prior_rain.sum()) if len(prior_rain) > 0 else 0.0
 

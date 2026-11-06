@@ -91,7 +91,7 @@ class DatasetHarmonizer:
                 drop_reasons["missing_date"] = drop_reasons.get("missing_date", 0) + 1
                 continue
             try:
-                parsed_date = pd.to_datetime(raw_date)
+                parsed_date = pd.to_datetime(raw_date, format="mixed")
                 if cfg.temporal_resolution == "daily":
                     date_str = parsed_date.strftime("%Y-%m-%d")
                 elif cfg.temporal_resolution == "monthly":

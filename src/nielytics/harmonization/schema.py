@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-VALID_HAZARDS = frozenset({"heatwave", "flood", "drought", "landslide", "cyclone"})
+VALID_HAZARDS = frozenset({"heatwave", "flood", "drought", "landslide", "cyclone", "rainfall"})
 VALID_DATA_QUALITIES = frozenset({"verified", "unverified", "modeled", "proxy"})
 VALID_OBSERVATION_TYPES = frozenset({"ground_station", "reanalysis", "nwp_forecast", "event_catalog"})
 

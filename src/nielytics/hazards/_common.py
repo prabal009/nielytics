@@ -130,7 +130,7 @@ def period(df: pd.DataFrame, column: str, start: str | None = None,
 
 def warnings_for(df: pd.DataFrame, date_column: str, measures: tuple[str, ...]) -> list[str]:
     messages: list[str] = []
-    if (df[date_column].diff().dropna() > pd.Timedelta(days=1)).any():
+    if (df[date_column].diff().dropna() > np.timedelta64(1, "D")).any():
         messages.append("Missing calendar dates are not interpolated; spells and windows break at gaps.")
     if df.loc[:, list(measures)].isna().any().any():
         messages.append("Missing measurements are not treated as zero; incomplete days or windows are excluded.")
@@ -155,7 +155,7 @@ def spells(df: pd.DataFrame, date_column: str, value_column: str,
     episode: list[dict] = []
     current: list[tuple[pd.Timestamp, float]] = []
     for day, value, qualifies in zip(df[date_column], df[value_column], candidate):
-        if current and (not qualifies or day - current[-1][0] != pd.Timedelta(days=1)):
+        if current and (not qualifies or (day - current[-1][0]).days != 1):
             if len(current) >= minimum_days:
                 episode.append({"start": current[0][0].date().isoformat(),
                                 "end": current[-1][0].date().isoformat(),
@@ -178,7 +178,7 @@ def complete_rolling(df: pd.DataFrame, date_column: str, value_column: str,
     rows = []
     for index in range(window - 1, len(df)):
         first = index - window + 1
-        if df[date_column].iloc[index] - df[date_column].iloc[first] != pd.Timedelta(days=window - 1):
+        if (df[date_column].iloc[index] - df[date_column].iloc[first]).days != window - 1:
             continue
         total = sums.iloc[index]
         if pd.isna(total):

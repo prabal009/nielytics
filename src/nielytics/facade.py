@@ -112,7 +112,7 @@ class ClimateAnalytics:
                     normal_tmax=kwargs.get("normal_tmax", 40.0),
                     terrain=kwargs.get("terrain", "plains"),
                 )
-        elif target_hazard == "flood":
+        elif target_hazard in ("flood", "rainfall"):
             analyzer_f = FloodAnalyzer(df, date_column="date", rainfall_column="value", unit="mm")
             if method == "accumulation":
                 res = analyzer_f.multi_day_accumulation(windows=kwargs.get("windows", [2, 3, 5, 7]))

@@ -159,7 +159,7 @@ class TemperatureForecaster:
 
         predictions: list[dict[str, Any]] = []
         for step in range(1, horizon + 1):
-            target_date = last_date + pd.Timedelta(days=step)
+            target_date = last_date + pd.DateOffset(days=step)
             # Find nearest available direct model horizon
             closest_h = min(self.horizons, key=lambda h: abs(h - step))
 
